@@ -1,0 +1,30 @@
+name: WebKey Midnight Bot
+on:
+  schedule:
+    - cron: '0 15 * * *' # 한국 시간 매일 자정(00:00)
+  workflow_dispatch: # 수동 테스트 버튼 생성
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 파일 수정을 위해 권한 허용
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install libraries
+        run: pip install web3 requests
+      - name: Run Bot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python main.py
+      - name: Save Changes # 갱신된 데이터를 깃허브 저장소에 다시 저장
+        run: |
+          git config --global user.name 'WebKey-Bot'
+          git config --global user.email 'bot@github.com'
+          git add .
+          git commit -m "Update midnight data" || echo "No changes"
+          git push
