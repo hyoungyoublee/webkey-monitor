@@ -2,14 +2,13 @@ import sys, time, requests, json, datetime, os
 from web3 import Web3
 
 # ---------------------------------------------------------
-# [1] 설정 (깃허브용이므로 RUN_FROM을 "GitHub"으로 설정합니다)
+# [1] 설정 (실행 환경에 따라 "PC", "Replit", "GitHub"으로 수정)
 # ---------------------------------------------------------
-RUN_FROM = "GitHub"  #
+RUN_FROM = "GitHub #
 
 TELEGRAM_TOKEN = "8499432639:AAFp7aLo3Woum2FeAA23kJTKFDMCZ0rMqM8"
 CHAT_ID = "-5074742053"
-# 접속 차단(429 에러) 방지를 위해 안정적인 바이낸스 공식 RPC를 사용합니다
-RPC_URL = "https://bsc-dataseed.binance.org/" 
+RPC_URL = "https://bsc-dataseed.binance.org/" #
 
 GITHUB_BASE = "https://raw.githubusercontent.com/hyoungyoublee/webkey-monitor/refs/heads/main/"
 DAILY_FILE = "webkey_daily_data.json"
@@ -32,6 +31,9 @@ ALARM_LIMIT_USDT_OUT = 50000
 alert_history = [] 
 ABI = [{"constant":True,"inputs":[],"name":"token0","outputs":[{"name":"","type":"address"}],"type":"function"},{"constant":True,"inputs":[],"name":"token1","outputs":[{"name":"","type":"address"}],"type":"function"},{"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"},{"constant":True,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"},{"constant":True,"inputs":[],"name":"getReserves","outputs":[{"name":"_reserve0","type":"uint112"},{"name":"_reserve1","type":"uint112"},{"name":"_blockTimestampLast","type":"uint32"}],"type":"function"},{"constant":True,"inputs":[],"name":"totalSupply","outputs":[{"name":"total","type":"uint256"}],"type":"function"}]
 
+# ---------------------------------------------------------
+# [2] 핵심 함수
+# ---------------------------------------------------------
 def send_msg(text):
     try: requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
     except: pass
@@ -72,7 +74,7 @@ def build_report(curr, base, mode_label="자정", all_mode=False):
     pd, sd, rd = m["price"] - bm["price"], m["supply"] - bm["supply"], m["ratio"] - bm["ratio"]
     ud, bd = m["tr_u"] - bm["tr_u"], m["backing"] - bm["backing"]
     
-    # 모든 항목 변동 감지 이모지
+    # [지능형 이모지]
     def get_emo(val):
         if val > 0.00001: return "📈"
         if val < -0.00001: return "📉"
@@ -84,7 +86,7 @@ def build_report(curr, base, mode_label="자정", all_mode=False):
     bp = (bd / bm["backing"] * 100) if bm["backing"] > 0 else 0
     
     L = "━━━━━━━━━━━━━━━━━━━━━━━━"
-    res = f"<b>🤖 WebKeyDAO 관제 v6.2.11 ({RUN_FROM})</b>\n"
+    res = f"<b>🤖 WebKeyDAO 관제 v6.2.13 ({RUN_FROM})</b>\n"
     res += f"<b>$</b> 시세: <b>${m['price']:.2f}</b> [<b>{pd:+.2f} ({pp:+.2f}%)</b>] {get_emo(pd)}\n"
     res += f"💎 담보: <b>${m['backing']:.3f}</b> (<b>{bp:+.2f}%</b>) {get_emo(bd)}\n"
     res += f"📊 발행: <b>{sd:+,.0f} ({sp:+.2f}%)</b> {get_emo(sd)} | 🔒 락업: <b>{m['ratio']:.1f}% ({rd:+.2f}%p)</b> {get_emo(rd)}\n"
@@ -100,31 +102,60 @@ def build_report(curr, base, mode_label="자정", all_mode=False):
         res += f"{L}\n"
     
     final_res = res + f"💰 총 가용현금: <b>${m['tr_u']:,.0f}</b> [<b>${ud:+,.0f} ({up:+.2f}%)</b>] {get_emo(ud)}"
+    if alert_history: final_res += f"\n\n🚨 <b>오늘의 유출 기록 (누적)</b>\n" + "\n".join(alert_history)
     return final_res
 
+# ---------------------------------------------------------
+# [3] 메인 루프 (날짜 동기화 강화)
+# ---------------------------------------------------------
 if __name__ == "__main__":
-    # 무한 대기 방지를 위해 Web3 타임아웃 30초 적용
     w3 = Web3(Web3.HTTPProvider(RPC_URL, request_kwargs={'timeout': 30}))
     if not w3.is_connected(): sys.exit(1)
-    
+
+    # [핵심] 서버 위치와 상관없이 한국 시간(KST)으로 오늘 날짜 계산
+    current_day = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime('%Y-%m-%d')
     curr_data = fetch_data(w3)
     
-    # 깃허브 액션 환경이면 파일 저장 후 자동 종료
     if os.environ.get("GITHUB_ACTIONS") == "true":
         with open(DAILY_FILE, "w", encoding="utf-8") as f:
-            json.dump({"date": str(datetime.date.today()), "data": curr_data}, f, indent=4, ensure_ascii=False)
+            json.dump({"date": current_day, "data": curr_data}, f, indent=4, ensure_ascii=False)
         sys.exit(0)
 
-    # (PC/Replit용 모니터링 로직 - 생략 가능하나 통합본으로 유지)
+    # 모니터링 모드 시작
     init_synced = load_baseline(DAILY_FILE)
-    daily_base = init_synced["data"] if init_synced and init_synced.get("date") == str(datetime.date.today()) else curr_data
-    daily_label = "자정" if init_synced and init_synced.get("date") == str(datetime.date.today()) else "봇 가동 시점"
+    # 한국 날짜가 일치할 때만 자정 데이터로 인정
+    if init_synced and init_synced.get("date") == current_day:
+        daily_base, daily_label = init_synced["data"], "자정"
+    else:
+        daily_base, daily_label = curr_data, "봇 가동 시점"
     
-    send_msg(f"🚀 <b>관제 v6.2.11 가동 ({RUN_FROM})</b>\n📍 기준: {daily_label} 데이터 동기화")
-    off = 0
+    send_msg(f"🚀 <b>관제 v6.2.13 가동 ({RUN_FROM})</b>\n📍 기준: {daily_label} 데이터 동기화")
+    send_msg(build_report(curr_data, daily_base, daily_label, False))
+    
+    last_u, off = daily_base["META"]["tr_u"], 0
+    try:
+        tmp = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates", params={"offset": -1, "timeout": 1}).json()
+        if tmp.get("result"): off = tmp["result"][0]["update_id"] + 1
+    except: pass
+
     while True:
         try:
             curr_data = fetch_data(w3)
-            # 명령어 처리 로직...
-            time.sleep(10)
+            current_u = curr_data["META"]["tr_u"]
+            if last_u - current_u > ALARM_LIMIT_USDT_OUT:
+                drop = last_u - current_u
+                incident = f"• {datetime.datetime.now().strftime('%H:%M')} : <b>${drop:,.0f}</b> 유출 🚨"
+                alert_history.append(incident)
+                send_msg(f"🚨 <b>[긴급 유출 감지 - {RUN_FROM}]</b>\n" + incident)
+                last_u = current_u
+
+            up_res = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates", params={"offset": off, "timeout": 5}).json()
+            for up in up_res.get("result", []):
+                off = up["update_id"] + 1
+                msg = up.get("message", {}).get("text", "").lower().strip()
+                if not msg: continue
+                is_all = "all" in msg
+                if any(x in msg for x in ["보고서", "일간", "daily", "all"]):
+                    send_msg(build_report(curr_data, daily_base, daily_label, is_all))
+            time.sleep(5)
         except: time.sleep(10)
