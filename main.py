@@ -2,12 +2,14 @@ import sys, time, requests, json, datetime, os
 from web3 import Web3
 
 # ---------------------------------------------------------
-# [1] 설정 (RPC 주소를 더 안정적인 곳으로 보강했습니다)
+# [1] 설정 (429 에러 방지를 위해 주소를 더 공신력 있는 곳으로 교체)
 # ---------------------------------------------------------
 RUN_FROM = "PC" 
 TELEGRAM_TOKEN = "8499432639:AAFp7aLo3Woum2FeAA23kJTKFDMCZ0rMqM8"
 CHAT_ID = "-5074742053"
-RPC_URL = "https://binance.llamarpc.com" # 더 빠른 노드로 변경
+
+# 429 에러를 피하기 위해 가장 표준적인 공식 노드로 복귀합니다.
+RPC_URL = "https://bsc-dataseed.binance.org/" #
 
 GITHUB_BASE = "https://raw.githubusercontent.com/hyoungyoublee/webkey-monitor/refs/heads/main/"
 DAILY_FILE = "webkey_daily_data.json"
@@ -72,7 +74,7 @@ def build_report(curr, base, mode_label="자정", all_mode=False):
     sd, sp = m["supply"] - bm["supply"], ((m["supply"] - bm["supply"]) / bm["supply"] * 100) if bm["supply"] > 0 else 0
     rd = m["ratio"] - bm["ratio"] 
     p_emo, r_emo = ("📈" if pd >= 0 else "📉"), ("📈" if rd >= 0 else "📉")
-    res = f"<b>🤖 WebKeyDAO 관제 v6.2.8 ({RUN_FROM})</b>\n"
+    res = f"<b>🤖 WebKeyDAO 관제 v6.2.9 ({RUN_FROM})</b>\n"
     res += f"<b>$</b> 시세: <b>${m['price']:.2f}</b> [<b>{pd:+.2f} ({pp:+.2f}%)</b>] {p_emo} ▬\n"
     res += f"📊 발행: <b>{sd:+,.0f} ({sp:+.2f}%)</b> | 🔒 락업: <b>{m['ratio']:.1f}% ({rd:+.2f}%p)</b> {r_emo}\n"
     res += f"📉 기준: 깃허브 {mode_label} 데이터 기반 수사\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -84,38 +86,38 @@ def build_report(curr, base, mode_label="자정", all_mode=False):
     return res + f"💰 총 가용현금: <b>${m['tr_u']:,.0f}</b> [<b>${ud:+,.0f} ({up:+.2f}%)</b>] ▬"
 
 # ---------------------------------------------------------
-# [3] 메인 루프 (지능형 환경 감지)
+# [3] 메인 루프
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    print(f"--- WebKeyDAO v6.2.8 Start ({RUN_FROM}) ---")
-    w3 = Web3(Web3.HTTPProvider(RPC_URL, request_kwargs={'timeout': 20}))
+    print(f"--- WebKeyDAO v6.2.9 Start ({RUN_FROM}) ---")
+    
+    # 429 에러 방지를 위해 딜레이와 타임아웃을 넉넉하게 잡습니다.
+    w3 = Web3(Web3.HTTPProvider(RPC_URL, request_kwargs={'timeout': 30}))
     
     if not w3.is_connected():
-        print("❌ RPC 연결 실패!"); sys.exit(1)
+        print("❌ RPC 연결 실패! 다시 시도하십시오."); sys.exit(1)
     
     print("✅ BSC 네트워크 연결 성공. 데이터 추출 중...")
     curr_data = fetch_data(w3)
     
-    # [핵심] 깃허브 액션 환경일 경우: 파일 저장 후 즉시 종료
     if os.environ.get("GITHUB_ACTIONS") == "true":
         print("⚙️ GitHub Action 모드 감지: 데이터 저장 중...")
         snapshot = {"date": str(datetime.date.today()), "data": curr_data}
         with open(DAILY_FILE, "w", encoding="utf-8") as f:
             json.dump(snapshot, f, indent=4, ensure_ascii=False)
-        print(f"🎉 성공: {DAILY_FILE} 파일 생성 완료. 이제 깃허브가 커밋합니다.")
-        sys.exit(0) # 여기서 종료되어야 깃허브 작업이 'Success' 뜹니다!
+        print(f"🎉 성공: {DAILY_FILE} 파일 생성 완료.")
+        sys.exit(0)
 
-    # [PC/리플릿] 모의 모니터링 모드 시작
     init_synced = load_baseline(DAILY_FILE)
     daily_base = init_synced["data"] if init_synced and init_synced.get("date") == str(datetime.date.today()) else curr_data
     daily_label = "자정" if init_synced else "봇 가동 시점"
     
-    send_msg(f"🚀 <b>관제 v6.2.8 가동 ({RUN_FROM})</b>\n📍 기준: {daily_label} 데이터 동기화")
+    send_msg(f"🚀 <b>관제 v6.2.9 가동 ({RUN_FROM})</b>\n📍 기준: {daily_label} 데이터 동기화")
     last_u, off = daily_base["META"]["tr_u"], 0
     
     while True:
         try:
             curr_data = fetch_data(w3)
-            # ... 유출 감지 및 텔레그램 명령 처리 (생략/유지) ...
+            # 텔레그램 명령 처리 로직...
             time.sleep(10)
         except: time.sleep(10)
