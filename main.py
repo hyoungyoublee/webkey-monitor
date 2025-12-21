@@ -2,13 +2,19 @@ import sys, time, requests, json, datetime, os
 from web3 import Web3
 
 # ---------------------------------------------------------
-# [1] 설정 및 12대 지갑 주소
+# [1] 설정 및 환경 변수 (필요 시 수정)
 # ---------------------------------------------------------
+RUN_FROM = "PC"  # 리플릿에서 실행 시 "Replit"으로 수정하여 저장
+
 TELEGRAM_TOKEN = "8499432639:AAFp7aLo3Woum2FeAA23kJTKFDMCZ0rMqM8"
 CHAT_ID = "-5074742053"
 RPC_URL = "https://bsc-dataseed.binance.org/" 
 
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/hyoungyoublee/webkey-monitor/refs/heads/main/webkey_daily_data.json"
+# 깃허브 데이터 경로
+GITHUB_BASE = "https://raw.githubusercontent.com/hyoungyoublee/webkey-monitor/refs/heads/main/"
+DAILY_FILE = "webkey_daily_data.json"
+WEEKLY_FILE = "webkey_weekly_data.json"
+MONTHLY_FILE = "webkey_monthly_data.json"
 
 ADDR_LP_POOL = "0x8665a78ccc84d6df2acaa4b207d88c6bc9b70ec5"
 ADDR_USDT    = "0x55d398326f99059fF775485246999027B3197955"
@@ -29,7 +35,7 @@ TARGETS = [
 ]
 
 ALARM_LIMIT_USDT_OUT = 50000 
-alert_history = []  # 오늘 발생한 유출 이력 누적 리스트
+alert_history = [] 
 last_alerted_usdt = 0
 ABI = [{"constant":True,"inputs":[],"name":"token0","outputs":[{"name":"","type":"address"}],"type":"function"},{"constant":True,"inputs":[],"name":"token1","outputs":[{"name":"","type":"address"}],"type":"function"},{"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"},{"constant":True,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"},{"constant":True,"inputs":[],"name":"getReserves","outputs":[{"name":"_reserve0","type":"uint112"},{"name":"_reserve1","type":"uint112"},{"name":"_blockTimestampLast","type":"uint32"}],"type":"function"},{"constant":True,"inputs":[],"name":"totalSupply","outputs":[{"name":"total","type":"uint256"}],"type":"function"}]
 
@@ -42,14 +48,11 @@ def send_msg(text):
     try:
         res = requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
         return res.status_code == 200
-    except Exception as e:
-        print(f"❌ 텔레그램 전송 실패: {e}")
-        return False
+    except: return False
 
-def load_synced_baseline():
-    """깃허브에서 자정 기준 데이터를 강제로 긁어옴"""
+def load_baseline(filename):
     try:
-        res = requests.get(GITHUB_RAW_URL, timeout=10)
+        res = requests.get(GITHUB_BASE + filename, timeout=10)
         if res.status_code == 200: return res.json()
     except: return None
 
@@ -78,105 +81,95 @@ def fetch_data(w3):
     snap["META"] = {"backing": total_u / total_supply if total_supply > 0 else 0, "supply": total_supply, "ratio": ratio, "tr_u": total_u, "price": price}
     return snap
 
-def build_report(curr, base, all_mode=False, base_label="깃허브 자정 데이터"):
+def build_report(curr, base, mode_label="자정", all_mode=False):
     m, bm = curr["META"], base.get("META", curr["META"])
     pd, pp = m["price"] - bm["price"], ((m["price"] - bm["price"]) / bm["price"] * 100) if bm["price"] > 0 else 0
     ud, up = m["tr_u"] - bm["tr_u"], ((m["tr_u"] - bm["tr_u"]) / bm["tr_u"] * 100) if bm["tr_u"] > 0 else 0
     bd, bp = m["backing"] - bm["backing"], ((m["backing"] - bm["backing"]) / bm["backing"] * 100) if bm["backing"] > 0 else 0
+    sd, sp = m["supply"] - bm["supply"], ((m["supply"] - bm["supply"]) / bm["supply"] * 100) if bm["supply"] > 0 else 0
+    
+    rd = m["ratio"] - bm["ratio"] # 락업 증감량
+    
+    # 추세 이모지 설정
+    p_emo = "📈" if pd >= 0 else "📉"
+    b_emo = "📈" if bp >= 0 else "📉"
+    s_emo = "📈" if sd >= 0 else "📉"
+    r_emo = "📈" if rd >= 0 else "📉"
     
     L = "━━━━━━━━━━━━━━━━━━━━━━━━"
-    res = f"<b>🤖 WebKeyDAO 관제 v6.2.6 (검증모드)</b>\n"
-    res += f"💲 시세: <b>${m['price']:.2f}</b> [<b>{pd:+.2f} ({pp:+.2f}%)</b>]\n"
-    res += f"💎 담보: <b>${m['backing']:.3f}</b> (<b>{bp:+.2f}%</b>)\n"
-    res += f"📉 기준: {base_label} 기반 수사\n{L}\n"
+    BAR = " ▬"
+    
+    res = f"<b>🤖 WebKeyDAO 관제 v6.2.6 ({RUN_FROM})</b>\n"
+    res += f"<b>$</b> 시세: <b>${m['price']:.2f}</b> [<b>{pd:+.2f} ({pp:+.2f}%)</b>] {p_emo}{BAR}\n"
+    res += f"💎 담보: <b>${m['backing']:.3f}</b> (<b>{bp:+.2f}%</b>) {b_emo}{BAR}\n"
+    res += f"📊 발행: <b>{sd:+,.0f} ({sp:+.2f}%)</b> {s_emo} | 🔒 락업: <b>{m['ratio']:.1f}% ({rd:+.2f}%p)</b> {r_emo}\n"
+    res += f"📉 기준: 깃허브 {mode_label} 데이터 기반 수사\n{L}\n"
     
     for n, _ in TARGETS:
         if not all_mode and n not in ["유동성 LP (시세결정)", "유동성 국고 (현금담보)", "트레저리 (발행원천)", "스테이킹 (자산동결)"]: continue
         c, b = curr[n], base.get(n, curr[n])
         wd = c['w'] - b['w']
-        res += f"📌 <b>{n}</b>\n • WKEY: {c['w']:,.0f} [<b>{wd:+,.0f}</b>]\n"
-        if c['u'] > 1:
+        wp = (wd / b['w'] * 100) if b['w'] > 0 else 0
+        res += f"📌 <b>{n}</b>\n • WKEY: {c['w']:,.0f} [<b>{wd:+,.0f} ({wp:+.1f}%)</b>]{BAR}\n"
+        if c['u'] > 0.1:
             uds = c['u'] - b['u']
-            res += f" • USDT: <b>${c['u']:,.0f}</b> [<b>${uds:+,.0f}</b>]\n"
+            up_ind = (uds / b['u'] * 100) if b['u'] > 0 else 0
+            res += f" • USDT: <b>${c['u']:,.0f}</b> [<b>${uds:+,.0f} ({up_ind:+.1f}%)</b>]{BAR}\n"
         res += f"{L}\n"
     
-    final_res = res + f"💰 <b>총 가용현금: ${m['tr_u']:,.0f}</b>"
-    
-    # [수정] 보고서 하단에 오늘 발생한 긴급 알람 이력 추가
+    final_res = res + f"💰 총 가용현금: <b>${m['tr_u']:,.0f}</b> [<b>${ud:+,.0f} ({up:+.2f}%)</b>]{BAR}"
     if alert_history:
         final_res += f"\n\n🚨 <b>오늘의 유출 기록 (누적)</b>\n" + "\n".join(alert_history)
-        
     return final_res
 
-def check_emergency_alarms(curr, base):
-    global last_alerted_usdt, alert_history
-    current_u = curr["META"]["tr_u"]
-    now_time = datetime.datetime.now().strftime("%H:%M")
-    
-    if last_alerted_usdt == 0: 
-        last_alerted_usdt = base["META"]["tr_u"]
-    
-    drop_amount = last_alerted_usdt - current_u
-    
-    # 설정한 한도(예: 5만불) 이상 유출 시 알람
-    if drop_amount > ALARM_LIMIT_USDT_OUT:
-        incident = f"• {now_time} : <b>${drop_amount:,.0f}</b> 유출 🚨"
-        alert_history.append(incident) # 리스트에 시간대와 금액 저장
-        
-        msg = f"🚨 <b>[긴급: 추가 유출 발생]</b>\n📜 <b>오늘의 실시간 유출 목록</b>\n" + "\n".join(alert_history)
-        send_msg(msg)
-        last_alerted_usdt = current_u 
-
 # ---------------------------------------------------------
-# [3] 메인 루프 (엄격한 기준점 적용)
+# [3] 메인 루프
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    print("🔍 수사 엔진 기동 중...")
     w3 = Web3(Web3.HTTPProvider(RPC_URL))
-    
     if w3.is_connected():
         current_day = str(datetime.date.today())
         init_curr = fetch_data(w3)
+        init_synced = load_baseline(DAILY_FILE)
         
-        # [수정] 깃허브 자정 데이터 로드 시도
-        init_synced = load_synced_baseline()
-        
-        # 깃허브 데이터가 있고, 오늘 날짜인 경우만 기준점으로 사용
         if init_synced and init_synced.get("date") == current_day:
-            init_base = init_synced["data"]
-            label = "깃허브 자정 데이터"
-            print(f"✅ 기준점 확립: {current_day} 자정 장부 동기화 완료")
+            daily_base = init_synced["data"]
+            daily_label = "자정"
         else:
-            # 자정 데이터가 없으면 현재 데이터를 기준점으로 삼아 변동폭을 0으로 강제 초기화
-            init_base = init_curr
-            label = "봇 가동 시점 (자정 데이터 없음)"
-            print("⚠️ 경고: 깃허브 자정 데이터가 없습니다. 변동폭 0으로 시작합니다.")
+            daily_base = init_curr
+            daily_label = "봇 가동 시점"
 
-        last_alerted_usdt = init_base["META"]["tr_u"]
-        
-        # 가동 알림 및 첫 보고서 전송
-        success = send_msg(f"🚀 <b>관제 v6.2.6 가동 (검증 완료)</b>\n기준: {label}")
-        if success:
-            send_msg(build_report(init_curr, init_base, False, label))
-            print("🎉 모든 절차 완료! 텔레그램을 확인하십시오.")
+        last_alerted_usdt = daily_base["META"]["tr_u"]
+        send_msg(f"🚀 <b>관제 v6.2.6 가동 ({RUN_FROM})</b>\n📍 기준: {daily_label} 데이터 동기화")
         
         off = 0
         while True:
             try:
                 curr_data = fetch_data(w3)
-                check_emergency_alarms(curr_data, init_base)
-                
-                # 메시지 수신 확인
+                current_u = curr_data["META"]["tr_u"]
+                if last_alerted_usdt - current_u > ALARM_LIMIT_USDT_OUT:
+                    drop = last_alerted_usdt - current_u
+                    incident = f"• {datetime.datetime.now().strftime('%H:%M')} : <b>${drop:,.0f}</b> 유출 ({RUN_FROM}) 🚨"
+                    alert_history.append(incident)
+                    send_msg(f"🚨 <b>[긴급: 추가 유출 발생 - {RUN_FROM}]</b>\n" + "\n".join(alert_history))
+                    last_alerted_usdt = current_u
+
                 up_res = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates", params={"offset": off, "timeout": 2}).json()
                 for up in up_res.get("result", []):
                     off = up["update_id"] + 1
                     msg = up.get("message", {}).get("text", "").lower().strip()
-                    if any(x in msg for x in ["보고서", "all"]):
-                        # 보고서 생성 시 저장된 alert_history가 자동으로 포함됨
-                        send_msg(build_report(curr_data, init_base, "all" in msg, label))
+                    if not msg: continue
+                    is_all = "all" in msg
+
+                    if any(x in msg for x in ["보고서", "일간", "daily", "all"]) and not any(x in msg for x in ["주간", "weekly", "월간", "monthly"]):
+                        send_msg(build_report(curr_data, daily_base, daily_label, is_all))
+                    elif any(x in msg for x in ["주간", "weekly"]):
+                        w_data = load_baseline(WEEKLY_FILE)
+                        if w_data: send_msg(build_report(curr_data, w_data["data"], "주간", is_all))
+                        else: send_msg("⚠️ 깃허브에 주간 데이터가 없습니다.")
+                    elif any(x in msg for x in ["월간", "monthly"]):
+                        m_data = load_baseline(MONTHLY_FILE)
+                        if m_data: send_msg(build_report(curr_data, m_data["data"], "월간", is_all))
+                        else: send_msg("⚠️ 깃허브에 월간 데이터가 없습니다.")
                 time.sleep(5)
-            except Exception as e: 
-                print(f"⚠️ 루프 에러: {e}")
-                time.sleep(10)
-    else:
-        print("❌ [에러] BSC 노드 연결 실패!")
+            except: time.sleep(10)
