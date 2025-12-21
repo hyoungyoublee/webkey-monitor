@@ -2,14 +2,14 @@ import sys, time, requests, json, datetime, os
 from web3 import Web3
 
 # ---------------------------------------------------------
-# [1] 설정 (429 에러 방지를 위해 주소를 더 공신력 있는 곳으로 교체)
+# [1] 설정 (깃허브용이므로 RUN_FROM을 "GitHub"으로 설정합니다)
 # ---------------------------------------------------------
-RUN_FROM = "PC" 
+RUN_FROM = "GitHub"  #
+
 TELEGRAM_TOKEN = "8499432639:AAFp7aLo3Woum2FeAA23kJTKFDMCZ0rMqM8"
 CHAT_ID = "-5074742053"
-
-# 429 에러를 피하기 위해 가장 표준적인 공식 노드로 복귀합니다.
-RPC_URL = "https://bsc-dataseed.binance.org/" #
+# 접속 차단(429 에러) 방지를 위해 안정적인 바이낸스 공식 RPC를 사용합니다
+RPC_URL = "https://bsc-dataseed.binance.org/" 
 
 GITHUB_BASE = "https://raw.githubusercontent.com/hyoungyoublee/webkey-monitor/refs/heads/main/"
 DAILY_FILE = "webkey_daily_data.json"
@@ -69,55 +69,62 @@ def fetch_data(w3):
 
 def build_report(curr, base, mode_label="자정", all_mode=False):
     m, bm = curr["META"], base.get("META", curr["META"])
-    pd, pp = m["price"] - bm["price"], ((m["price"] - bm["price"]) / bm["price"] * 100) if bm["price"] > 0 else 0
-    ud, up = m["tr_u"] - bm["tr_u"], ((m["tr_u"] - bm["tr_u"]) / bm["tr_u"] * 100) if bm["tr_u"] > 0 else 0
-    sd, sp = m["supply"] - bm["supply"], ((m["supply"] - bm["supply"]) / bm["supply"] * 100) if bm["supply"] > 0 else 0
-    rd = m["ratio"] - bm["ratio"] 
-    p_emo, r_emo = ("📈" if pd >= 0 else "📉"), ("📈" if rd >= 0 else "📉")
-    res = f"<b>🤖 WebKeyDAO 관제 v6.2.9 ({RUN_FROM})</b>\n"
-    res += f"<b>$</b> 시세: <b>${m['price']:.2f}</b> [<b>{pd:+.2f} ({pp:+.2f}%)</b>] {p_emo} ▬\n"
-    res += f"📊 발행: <b>{sd:+,.0f} ({sp:+.2f}%)</b> | 🔒 락업: <b>{m['ratio']:.1f}% ({rd:+.2f}%p)</b> {r_emo}\n"
-    res += f"📉 기준: 깃허브 {mode_label} 데이터 기반 수사\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    pd, sd, rd = m["price"] - bm["price"], m["supply"] - bm["supply"], m["ratio"] - bm["ratio"]
+    ud, bd = m["tr_u"] - bm["tr_u"], m["backing"] - bm["backing"]
+    
+    # 모든 항목 변동 감지 이모지
+    def get_emo(val):
+        if val > 0.00001: return "📈"
+        if val < -0.00001: return "📉"
+        return "▬"
+
+    pp = (pd / bm["price"] * 100) if bm["price"] > 0 else 0
+    sp = (sd / bm["supply"] * 100) if bm["supply"] > 0 else 0
+    up = (ud / bm["tr_u"] * 100) if bm["tr_u"] > 0 else 0
+    bp = (bd / bm["backing"] * 100) if bm["backing"] > 0 else 0
+    
+    L = "━━━━━━━━━━━━━━━━━━━━━━━━"
+    res = f"<b>🤖 WebKeyDAO 관제 v6.2.11 ({RUN_FROM})</b>\n"
+    res += f"<b>$</b> 시세: <b>${m['price']:.2f}</b> [<b>{pd:+.2f} ({pp:+.2f}%)</b>] {get_emo(pd)}\n"
+    res += f"💎 담보: <b>${m['backing']:.3f}</b> (<b>{bp:+.2f}%</b>) {get_emo(bd)}\n"
+    res += f"📊 발행: <b>{sd:+,.0f} ({sp:+.2f}%)</b> {get_emo(sd)} | 🔒 락업: <b>{m['ratio']:.1f}% ({rd:+.2f}%p)</b> {get_emo(rd)}\n"
+    res += f"📉 기준: 깃허브 {mode_label} 데이터 기반 수사\n{L}\n"
+    
     for n, _ in TARGETS:
         if not all_mode and n not in ["유동성 LP (시세결정)", "유동성 국고 (현금담보)", "트레저리 (발행원천)", "스테이킹 (자산동결)"]: continue
         c, b = curr[n], base.get(n, curr[n])
-        wd = c['w'] - b['w']
-        res += f"📌 <b>{n}</b>\n • WKEY: {c['w']:,.0f} [<b>{wd:+,.0f}</b>] ▬\n"
-    return res + f"💰 총 가용현금: <b>${m['tr_u']:,.0f}</b> [<b>${ud:+,.0f} ({up:+.2f}%)</b>] ▬"
+        wd, uds = c['w'] - b['w'], c['u'] - b['u']
+        res += f"📌 <b>{n}</b>\n • WKEY: {c['w']:,.0f} [<b>{wd:+,.0f}</b>] {get_emo(wd)}\n"
+        if c['u'] > 0.1:
+            res += f" • USDT: <b>${c['u']:,.0f}</b> [<b>${uds:+,.0f}</b>] {get_emo(uds)}\n"
+        res += f"{L}\n"
+    
+    final_res = res + f"💰 총 가용현금: <b>${m['tr_u']:,.0f}</b> [<b>${ud:+,.0f} ({up:+.2f}%)</b>] {get_emo(ud)}"
+    return final_res
 
-# ---------------------------------------------------------
-# [3] 메인 루프
-# ---------------------------------------------------------
 if __name__ == "__main__":
-    print(f"--- WebKeyDAO v6.2.9 Start ({RUN_FROM}) ---")
-    
-    # 429 에러 방지를 위해 딜레이와 타임아웃을 넉넉하게 잡습니다.
+    # 무한 대기 방지를 위해 Web3 타임아웃 30초 적용
     w3 = Web3(Web3.HTTPProvider(RPC_URL, request_kwargs={'timeout': 30}))
+    if not w3.is_connected(): sys.exit(1)
     
-    if not w3.is_connected():
-        print("❌ RPC 연결 실패! 다시 시도하십시오."); sys.exit(1)
-    
-    print("✅ BSC 네트워크 연결 성공. 데이터 추출 중...")
     curr_data = fetch_data(w3)
     
+    # 깃허브 액션 환경이면 파일 저장 후 자동 종료
     if os.environ.get("GITHUB_ACTIONS") == "true":
-        print("⚙️ GitHub Action 모드 감지: 데이터 저장 중...")
-        snapshot = {"date": str(datetime.date.today()), "data": curr_data}
         with open(DAILY_FILE, "w", encoding="utf-8") as f:
-            json.dump(snapshot, f, indent=4, ensure_ascii=False)
-        print(f"🎉 성공: {DAILY_FILE} 파일 생성 완료.")
+            json.dump({"date": str(datetime.date.today()), "data": curr_data}, f, indent=4, ensure_ascii=False)
         sys.exit(0)
 
+    # (PC/Replit용 모니터링 로직 - 생략 가능하나 통합본으로 유지)
     init_synced = load_baseline(DAILY_FILE)
     daily_base = init_synced["data"] if init_synced and init_synced.get("date") == str(datetime.date.today()) else curr_data
-    daily_label = "자정" if init_synced else "봇 가동 시점"
+    daily_label = "자정" if init_synced and init_synced.get("date") == str(datetime.date.today()) else "봇 가동 시점"
     
-    send_msg(f"🚀 <b>관제 v6.2.9 가동 ({RUN_FROM})</b>\n📍 기준: {daily_label} 데이터 동기화")
-    last_u, off = daily_base["META"]["tr_u"], 0
-    
+    send_msg(f"🚀 <b>관제 v6.2.11 가동 ({RUN_FROM})</b>\n📍 기준: {daily_label} 데이터 동기화")
+    off = 0
     while True:
         try:
             curr_data = fetch_data(w3)
-            # 텔레그램 명령 처리 로직...
+            # 명령어 처리 로직...
             time.sleep(10)
         except: time.sleep(10)
