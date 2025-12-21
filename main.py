@@ -2,15 +2,14 @@ import sys, time, requests, json, datetime, os
 from web3 import Web3
 
 # ---------------------------------------------------------
-# [1] 설정 및 환경 변수 (필요 시 수정)
+# [1] 설정 및 환경 변수
 # ---------------------------------------------------------
-RUN_FROM = "PC"  # 리플릿에서 실행 시 "Replit"으로 수정하여 저장
+RUN_FROM = "PC"  # 리플릿 실행 시 "Replit"으로 수정
 
 TELEGRAM_TOKEN = "8499432639:AAFp7aLo3Woum2FeAA23kJTKFDMCZ0rMqM8"
 CHAT_ID = "-5074742053"
-RPC_URL = "https://bsc-dataseed.binance.org/" 
+RPC_URL = "https://bsc-dataseed.binance.org/" #
 
-# 깃허브 데이터 경로
 GITHUB_BASE = "https://raw.githubusercontent.com/hyoungyoublee/webkey-monitor/refs/heads/main/"
 DAILY_FILE = "webkey_daily_data.json"
 WEEKLY_FILE = "webkey_weekly_data.json"
@@ -36,7 +35,6 @@ TARGETS = [
 
 ALARM_LIMIT_USDT_OUT = 50000 
 alert_history = [] 
-last_alerted_usdt = 0
 ABI = [{"constant":True,"inputs":[],"name":"token0","outputs":[{"name":"","type":"address"}],"type":"function"},{"constant":True,"inputs":[],"name":"token1","outputs":[{"name":"","type":"address"}],"type":"function"},{"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"},{"constant":True,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"},{"constant":True,"inputs":[],"name":"getReserves","outputs":[{"name":"_reserve0","type":"uint112"},{"name":"_reserve1","type":"uint112"},{"name":"_blockTimestampLast","type":"uint32"}],"type":"function"},{"constant":True,"inputs":[],"name":"totalSupply","outputs":[{"name":"total","type":"uint256"}],"type":"function"}]
 
 # ---------------------------------------------------------
@@ -64,10 +62,12 @@ def fetch_data(w3):
     res, lp_supply, dec = lp_con.functions.getReserves().call(), lp_con.functions.totalSupply().call(), w_con.functions.decimals().call()
     r_u, r_w = (res[0], res[1]) if is_u0 else (res[1], res[0])
     total_supply = w_con.functions.totalSupply().call() / (10**dec)
+    
     try:
         price_res = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{real_wkey}", timeout=5).json()
         price = float(price_res['pairs'][0].get('priceUsd', 0)) if price_res.get('pairs') else 0.0
     except: price = 0.0
+    
     snap, total_u = {}, 0
     for name, addr in TARGETS:
         t = w3.to_checksum_address(addr)
@@ -77,6 +77,7 @@ def fetch_data(w3):
         f_w, f_u = raw_w + ((r_w * share) / (10**dec)), raw_u + ((r_u * share) / 1e18)
         snap[name] = {"w": f_w, "u": f_u}
         if any(x in name for x in ["국고", "LP"]): total_u += f_u
+        
     ratio = (snap["스테이킹 (자산동결)"]["w"] / total_supply * 100) if total_supply > 0 else 0
     snap["META"] = {"backing": total_u / total_supply if total_supply > 0 else 0, "supply": total_supply, "ratio": ratio, "tr_u": total_u, "price": price}
     return snap
@@ -87,10 +88,8 @@ def build_report(curr, base, mode_label="자정", all_mode=False):
     ud, up = m["tr_u"] - bm["tr_u"], ((m["tr_u"] - bm["tr_u"]) / bm["tr_u"] * 100) if bm["tr_u"] > 0 else 0
     bd, bp = m["backing"] - bm["backing"], ((m["backing"] - bm["backing"]) / bm["backing"] * 100) if bm["backing"] > 0 else 0
     sd, sp = m["supply"] - bm["supply"], ((m["supply"] - bm["supply"]) / bm["supply"] * 100) if bm["supply"] > 0 else 0
+    rd = m["ratio"] - bm["ratio"] 
     
-    rd = m["ratio"] - bm["ratio"] # 락업 증감량
-    
-    # 추세 이모지 설정
     p_emo = "📈" if pd >= 0 else "📉"
     b_emo = "📈" if bp >= 0 else "📉"
     s_emo = "📈" if sd >= 0 else "📉"
@@ -99,7 +98,7 @@ def build_report(curr, base, mode_label="자정", all_mode=False):
     L = "━━━━━━━━━━━━━━━━━━━━━━━━"
     BAR = " ▬"
     
-    res = f"<b>🤖 WebKeyDAO 관제 v6.2.6 ({RUN_FROM})</b>\n"
+    res = f"<b>🤖 WebKeyDAO 관제 v6.2.7 ({RUN_FROM})</b>\n"
     res += f"<b>$</b> 시세: <b>${m['price']:.2f}</b> [<b>{pd:+.2f} ({pp:+.2f}%)</b>] {p_emo}{BAR}\n"
     res += f"💎 담보: <b>${m['backing']:.3f}</b> (<b>{bp:+.2f}%</b>) {b_emo}{BAR}\n"
     res += f"📊 발행: <b>{sd:+,.0f} ({sp:+.2f}%)</b> {s_emo} | 🔒 락업: <b>{m['ratio']:.1f}% ({rd:+.2f}%p)</b> {r_emo}\n"
@@ -123,10 +122,12 @@ def build_report(curr, base, mode_label="자정", all_mode=False):
     return final_res
 
 # ---------------------------------------------------------
-# [3] 메인 루프
+# [3] 메인 루프 (Web3 타임아웃 20초 적용)
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    w3 = Web3(Web3.HTTPProvider(RPC_URL))
+    # RPC 응답이 없을 때 무한 대기를 방지하기 위해 타임아웃 강제 설정
+    w3 = Web3(Web3.HTTPProvider(RPC_URL, request_kwargs={'timeout': 20}))
+    
     if w3.is_connected():
         current_day = str(datetime.date.today())
         init_curr = fetch_data(w3)
@@ -140,7 +141,7 @@ if __name__ == "__main__":
             daily_label = "봇 가동 시점"
 
         last_alerted_usdt = daily_base["META"]["tr_u"]
-        send_msg(f"🚀 <b>관제 v6.2.6 가동 ({RUN_FROM})</b>\n📍 기준: {daily_label} 데이터 동기화")
+        send_msg(f"🚀 <b>관제 v6.2.7 가동 ({RUN_FROM})</b>\n📍 기준: {daily_label} 데이터 동기화")
         
         off = 0
         while True:
@@ -172,4 +173,5 @@ if __name__ == "__main__":
                         if m_data: send_msg(build_report(curr_data, m_data["data"], "월간", is_all))
                         else: send_msg("⚠️ 깃허브에 월간 데이터가 없습니다.")
                 time.sleep(5)
-            except: time.sleep(10)
+            except Exception as e:
+                time.sleep(10)
