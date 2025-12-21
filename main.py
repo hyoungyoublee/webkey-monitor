@@ -4,7 +4,7 @@ from web3 import Web3
 # ---------------------------------------------------------
 # [1] 설정 및 12대 지갑 주소 (v4.6.2 원본 사수)
 # ---------------------------------------------------------
-TELEGRAM_TOKEN = "8499432639:AAHXj7pZWjNYKFaeBzZTE4iZC-ZYGfsfjjc"
+TELEGRAM_TOKEN = "8499432639:AAFp7aLo3Woum2FeAA23kJTKFDMCZ0rMqM8"
 CHAT_ID = "-5074742053"
 RPC_URL = "https://bsc-dataseed.binance.org/" 
 DATA_FILE = "webkey_daily_data.json"
