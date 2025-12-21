@@ -4,7 +4,7 @@ from web3 import Web3
 # ---------------------------------------------------------
 # [1] 설정 (실행 환경에 따라 수정: "PC", "Replit", "GitHub")
 # ---------------------------------------------------------
-RUN_FROM = "PC" 
+RUN_FROM = "GitHub" 
 
 TELEGRAM_TOKEN = "8499432639:AAFp7aLo3Woum2FeAA23kJTKFDMCZ0rMqM8"
 CHAT_ID = "-5074742053"
