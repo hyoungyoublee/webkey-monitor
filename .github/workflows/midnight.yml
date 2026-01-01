@@ -1,30 +1,41 @@
-name: WebKey Midnight Bot
+name: WebKey Automated Snapshot
+
 on:
   schedule:
-    - cron: '0 15 * * *' # 한국 시간 매일 자정(00:00)
-  workflow_dispatch: # 수동 테스트 버튼 생성
+    # 한국 시간(KST) 매일 00:05분에 실행 (UTC 15:05)
+    - cron: '5 15 * * *'
+  workflow_dispatch: # 언제든 버튼 눌러서 즉시 기준점 갱신 가능
+
 jobs:
-  run-bot:
+  update-snapshot:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 파일 수정을 위해 권한 허용
+      contents: write
     steps:
       - uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
-      - name: Install libraries
+          python-version: '3.10'
+
+      - name: Install dependencies
         run: pip install web3 requests
-      - name: Run Bot
+
+      - name: Run Snapshot & Update JSON
         env:
+          # 필요한 경우 시크릿 설정 (기본은 공개 RPC 사용 가능)
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: python main.py
-      - name: Save Changes # 갱신된 데이터를 깃허브 저장소에 다시 저장
+        run: |
+          # 파이썬 실행 시 'snapshot' 인자를 주어 기록 모드로 동작하게 함
+          python main.py --snapshot 
+
+      - name: Commit and Push Changes
         run: |
           git config --global user.name 'WebKey-Bot'
-          git config --global user.email 'bot@github.com'
-          git add .
-          git commit -m "Update midnight data" || echo "No changes"
+          git config --global user.email 'bot@webkeydao.com'
+          git add webkey_daily_data.json webkey_weekly_data.json webkey_monthly_data.json
+          # 변경사항이 있을 때만 커밋 (수동 데이터가 최신으로 갱신됨)
+          git commit -m "🚀 [Auto] 기준점 데이터 자동 갱신 (${{ github.event_name }})" || echo "No changes to commit"
           git push
